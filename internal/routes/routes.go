@@ -19,6 +19,13 @@ func Setup(
 	opsHandler *handlers.OpsHandler,
 	aiHandler *handlers.AIHandler,
 	systemHandler *handlers.SystemHandler,
+	processHandler *handlers.ProcessHandler,
+	dockerHandler *handlers.DockerHandler,
+	monitorHandler *handlers.MonitorHandler,
+	alertHandler *handlers.AlertHandler,
+	databaseHandler *handlers.DatabaseHandler,
+	fileHandler *handlers.FileHandler,
+	auditHandler *handlers.AuditHandler,
 ) {
 	// ─── Public ──────────────────────────────────────────────────────────
 	app.Get("/api/health", systemHandler.Health)
@@ -69,6 +76,63 @@ func Setup(
 	api.Post("/crons/:id/run", cronHandler.RunCron)
 	api.Post("/crons/:id/toggle", cronHandler.ToggleCron)
 	api.Get("/crons/:id/logs", cronHandler.GetCronLogs)
+
+	// Process + Services + Network (params: :id = server ID)
+	api.Get("/servers/:id/processes", processHandler.ListProcesses)
+	api.Post("/servers/:id/processes/:pid/kill", processHandler.KillProcess)
+	api.Get("/servers/:id/services", processHandler.ListServices)
+	api.Post("/servers/:id/services/:name/action", processHandler.ServiceAction)
+	api.Get("/servers/:id/network/connections", processHandler.ListNetworkConnections)
+
+	// Docker (params: :id = server ID)
+	docker := api.Group("/servers/:id/docker")
+	docker.Get("/containers", dockerHandler.ListContainers)
+	docker.Post("/containers/:cid/action", dockerHandler.ContainerAction)
+	docker.Get("/containers/:cid/stats", dockerHandler.ContainerStats)
+	docker.Get("/containers/:cid/logs", dockerHandler.ContainerLogs)
+	docker.Get("/images", dockerHandler.ListImages)
+	docker.Post("/images/pull", dockerHandler.PullImage)
+	docker.Post("/images/prune", dockerHandler.PruneImages)
+	docker.Delete("/images/:iid", dockerHandler.RemoveImage)
+
+	// Monitors
+	monitors := api.Group("/monitors")
+	monitors.Get("/", monitorHandler.ListMonitors)
+	monitors.Post("/", monitorHandler.CreateMonitor)
+	monitors.Get("/ssl", monitorHandler.ListSSLCerts)
+	monitors.Post("/ssl/check", monitorHandler.CheckSSL)
+	monitors.Get("/:id", monitorHandler.GetMonitor)
+	monitors.Delete("/:id", monitorHandler.DeleteMonitor)
+	monitors.Post("/:id/toggle", monitorHandler.ToggleMonitor)
+	monitors.Get("/:id/pings", monitorHandler.GetMonitorPings)
+
+	// Alerts
+	alerts := api.Group("/alerts")
+	alerts.Get("/rules", alertHandler.ListAlertRules)
+	alerts.Post("/rules", alertHandler.CreateAlertRule)
+	alerts.Delete("/rules/:id", alertHandler.DeleteAlertRule)
+	alerts.Get("/", alertHandler.ListAlerts)
+	alerts.Put("/:id/acknowledge", alertHandler.AcknowledgeAlert)
+	alerts.Put("/:id/resolve", alertHandler.ResolveAlert)
+
+	// Database
+	database := api.Group("/database")
+	database.Get("/tables", databaseHandler.ListTables)
+	database.Get("/tables/:name/rows", databaseHandler.GetTableRows)
+	database.Post("/query", databaseHandler.ExecuteQuery)
+	database.Get("/stats", databaseHandler.GetDatabaseStats)
+
+	// Files
+	api.Get("/servers/:id/files", fileHandler.ListFiles)
+	api.Get("/servers/:id/files/content", fileHandler.ReadFile)
+	api.Put("/servers/:id/files/content", fileHandler.WriteFile)
+	api.Get("/servers/:id/disk", fileHandler.DiskUsage)
+
+	// Audit
+	api.Get("/audit", auditHandler.ListAuditLogs)
+
+	// Status Page
+	api.Get("/status", systemHandler.StatusPage)
 
 	// Coolify Proxy
 	coolify := api.Group("/coolify")

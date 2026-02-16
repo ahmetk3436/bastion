@@ -129,6 +129,65 @@ func (h *SystemHandler) DashboardOverview(c *fiber.Ctx) error {
 	})
 }
 
+// StatusPage returns an aggregated status overview of servers and monitors.
+func (h *SystemHandler) StatusPage(c *fiber.Ctx) error {
+	// Server statuses
+	type ServerStatus struct {
+		ID     string `json:"id"`
+		Name   string `json:"name"`
+		Host   string `json:"host"`
+		Status string `json:"status"`
+	}
+	var servers []ServerStatus
+	h.db.Table("servers").
+		Where("deleted_at IS NULL").
+		Select("id, name, host, status").
+		Order("name ASC").
+		Find(&servers)
+
+	// Monitor statuses
+	type MonitorStatus struct {
+		ID             string  `json:"id"`
+		Name           string  `json:"name"`
+		URL            string  `json:"url"`
+		LastStatus     string  `json:"last_status"`
+		UptimePercent  float64 `json:"uptime_percent"`
+		LastResponseMs int     `json:"last_response_ms"`
+	}
+	var monitors []MonitorStatus
+	h.db.Table("monitors").
+		Where("deleted_at IS NULL").
+		Select("id, name, url, last_status, uptime_percent, last_response_ms").
+		Order("name ASC").
+		Find(&monitors)
+
+	// Overall status
+	overall := "operational"
+	for _, s := range servers {
+		if s.Status == "offline" {
+			overall = "degraded"
+			break
+		}
+	}
+	for _, m := range monitors {
+		if m.LastStatus == "down" {
+			overall = "degraded"
+			break
+		}
+	}
+
+	// Active alerts count
+	var activeAlerts int64
+	h.db.Table("alerts").Where("status = ?", "firing").Count(&activeAlerts)
+
+	return c.JSON(fiber.Map{
+		"status":        overall,
+		"servers":       servers,
+		"monitors":      monitors,
+		"active_alerts": activeAlerts,
+	})
+}
+
 // fetchCoolifyAppCount calls the Coolify API to count deployed applications.
 func (h *SystemHandler) fetchCoolifyAppCount() int {
 	url := fmt.Sprintf("%s/api/v1/applications", h.cfg.CoolifyAPIURL)

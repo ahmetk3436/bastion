@@ -34,5 +34,11 @@ func Migrate() error {
 		&models.CommandHistory{},
 		&models.ServerMetrics{},
 		&models.AIConversation{},
+		&models.Monitor{},
+		&models.MonitorPing{},
+		&models.SSLCert{},
+		&models.AlertRule{},
+		&models.Alert{},
+		&models.AuditLog{},
 	)
 }

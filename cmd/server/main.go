@@ -66,6 +66,10 @@ func main() {
 	metricsCollector := services.NewMetricsCollector(db, sshPool, encryptor, cfg.MetricsCollectInterval)
 	metricsCollector.Start()
 
+	// ─── Monitor Checker ────────────────────────────────────────────────
+	monitorChecker := services.NewMonitorChecker(db)
+	monitorChecker.Start()
+
 	// ─── Handlers ───────────────────────────────────────────────────────
 	authHandler := handlers.NewAuthHandler(cfg)
 	serverHandler := handlers.NewServerHandler(db, encryptor, sshPool)
@@ -76,6 +80,13 @@ func main() {
 	opsHandler := handlers.NewOpsHandler(cfg)
 	aiHandler := handlers.NewAIHandler(cfg, db, serverHandler)
 	systemHandler := handlers.NewSystemHandler(db, cfg)
+	processHandler := handlers.NewProcessHandler(serverHandler)
+	dockerHandler := handlers.NewDockerHandler(serverHandler)
+	monitorHandler := handlers.NewMonitorHandler(db)
+	alertHandler := handlers.NewAlertHandler(db)
+	databaseHandler := handlers.NewDatabaseHandler(db)
+	fileHandler := handlers.NewFileHandler(serverHandler)
+	auditHandler := handlers.NewAuditHandler(db)
 
 	// ─── Fiber App ──────────────────────────────────────────────────────
 	app := fiber.New(fiber.Config{
@@ -133,7 +144,9 @@ func main() {
 
 	// ─── Routes ─────────────────────────────────────────────────────────
 	routes.Setup(app, cfg, authHandler, serverHandler, terminalHandler, commandHandler,
-		cronHandler, coolifyHandler, opsHandler, aiHandler, systemHandler)
+		cronHandler, coolifyHandler, opsHandler, aiHandler, systemHandler,
+		processHandler, dockerHandler, monitorHandler, alertHandler, databaseHandler,
+		fileHandler, auditHandler)
 
 	// ─── Graceful Shutdown ──────────────────────────────────────────────
 	quit := make(chan os.Signal, 1)
@@ -143,6 +156,7 @@ func main() {
 		<-quit
 		slog.Info("Shutting down Bastion...")
 
+		monitorChecker.Stop()
 		metricsCollector.Stop()
 		sshPool.CloseAll()
 
