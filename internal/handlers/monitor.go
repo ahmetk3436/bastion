@@ -298,6 +298,34 @@ func (h *MonitorHandler) CheckSSL(c *fiber.Ctx) error {
 	})
 }
 
+// AutoSeedMonitors creates default monitors if none exist.
+func (h *MonitorHandler) AutoSeedMonitors(c *fiber.Ctx) error {
+	var count int64
+	h.db.Model(&models.Monitor{}).Count(&count)
+	if count > 0 {
+		return c.JSON(fiber.Map{"message": "Monitors already exist", "seeded": 0})
+	}
+
+	seeds := []models.Monitor{
+		{Name: "Unified Backend", URL: "http://89.47.113.196:8094/api/health", Type: "http", Method: "GET", IntervalSeconds: 60, TimeoutMs: 5000, ExpectedStatus: 200, Enabled: true, LastStatus: "unknown", UptimePercent: 100},
+		{Name: "Ops Backend", URL: "http://89.47.113.196:8095/api/health", Type: "http", Method: "GET", IntervalSeconds: 60, TimeoutMs: 5000, ExpectedStatus: 200, Enabled: true, LastStatus: "unknown", UptimePercent: 100},
+		{Name: "GlitchTip", URL: "http://89.47.113.196:8096", Type: "http", Method: "GET", IntervalSeconds: 120, TimeoutMs: 10000, ExpectedStatus: 200, Enabled: true, LastStatus: "unknown", UptimePercent: 100},
+		{Name: "Bastion", URL: "http://89.47.113.196:8097/api/health", Type: "http", Method: "GET", IntervalSeconds: 60, TimeoutMs: 5000, ExpectedStatus: 200, Enabled: true, LastStatus: "unknown", UptimePercent: 100},
+	}
+
+	created := 0
+	for _, s := range seeds {
+		if err := h.db.Create(&s).Error; err == nil {
+			created++
+		}
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+		"message": fmt.Sprintf("Seeded %d monitors", created),
+		"seeded":  created,
+	})
+}
+
 // ListSSLCerts returns all tracked SSL certificates.
 func (h *MonitorHandler) ListSSLCerts(c *fiber.Ctx) error {
 	var certs []models.SSLCert

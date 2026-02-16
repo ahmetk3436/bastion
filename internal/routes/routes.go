@@ -99,6 +99,7 @@ func Setup(
 	monitors := api.Group("/monitors")
 	monitors.Get("/", monitorHandler.ListMonitors)
 	monitors.Post("/", monitorHandler.CreateMonitor)
+	monitors.Post("/auto-seed", monitorHandler.AutoSeedMonitors)
 	monitors.Get("/ssl", monitorHandler.ListSSLCerts)
 	monitors.Post("/ssl/check", monitorHandler.CheckSSL)
 	monitors.Get("/:id", monitorHandler.GetMonitor)
