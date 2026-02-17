@@ -43,7 +43,6 @@ type AIHandler struct {
 	client        *http.Client
 	streamClient  *http.Client // no timeout for streaming
 	serverHandler *ServerHandler
-	webSearch     *services.WebSearchService
 }
 
 func NewAIHandler(cfg *config.Config, db *gorm.DB, serverHandler *ServerHandler) *AIHandler {
@@ -57,7 +56,6 @@ func NewAIHandler(cfg *config.Config, db *gorm.DB, serverHandler *ServerHandler)
 			Timeout: 0, // no timeout for SSE streaming
 		},
 		serverHandler: serverHandler,
-		webSearch:     services.NewWebSearchService(cfg.TavilyAPIKey, cfg.SerperAPIKey),
 	}
 }
 
@@ -73,7 +71,6 @@ type AIActionRequest struct {
 	ServerID string `json:"server_id"`
 	Command  string `json:"command"`  // for execute_command
 	AppUUID  string `json:"app_uuid"` // for restart_app, get_logs
-	Query    string `json:"query"`    // for search_web
 }
 
 // ─── Chat (non-streaming) ───────────────────────────────────────────────────
@@ -403,8 +400,6 @@ func (h *AIHandler) ExecuteAIAction(c *fiber.Ctx) error {
 		return h.getLogs(c, req)
 	case "get_metrics":
 		return h.getMetrics(c, req)
-	case "search_web":
-		return h.searchWeb(c, req)
 	default:
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error":   true,
@@ -629,6 +624,7 @@ func (h *AIHandler) getMetrics(c *fiber.Ctx, req AIActionRequest) error {
 	})
 }
 
+// ─── GetConversation ────────────────────────────────────────────────────────
 
 // searchWeb performs a web search using Tavily or Serper API
 func (h *AIHandler) searchWeb(c *fiber.Ctx, req AIActionRequest) error {
@@ -639,7 +635,10 @@ func (h *AIHandler) searchWeb(c *fiber.Ctx, req AIActionRequest) error {
 		})
 	}
 
-	results, err := h.webSearch.Search(req.Query, 10)
+	// Use the tool registry's web search service
+	result, err := h.toolRegistry.ExecuteTool("search_web", map[string]interface{}{
+		"query": req.Query,
+	})
 	if err != nil {
 		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{
 			"error":   true,
@@ -648,14 +647,11 @@ func (h *AIHandler) searchWeb(c *fiber.Ctx, req AIActionRequest) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"action":       "search_web",
-		"query":        req.Query,
-		"results":      results,
-		"result_count": len(results),
-		"formatted":    h.webSearch.FormatResults(results),
+		"action":    "search_web",
+		"query":     req.Query,
+		"results":   result,
 	})
 }
-// ─── GetConversation ────────────────────────────────────────────────────────
 
 func (h *AIHandler) GetConversation(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))

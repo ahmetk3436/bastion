@@ -16,6 +16,7 @@ import (
 	"github.com/ahmetk3436/bastion/internal/config"
 	"github.com/ahmetk3436/bastion/internal/models"
 	"github.com/ahmetk3436/bastion/internal/services"
+	"github.com/ahmetk3436/bastion/internal/tools"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/valyala/fasthttp"
@@ -27,7 +28,7 @@ import (
 
 type coolifyCache struct {
 	mu        sync.RWMutex
-	apps      string
+	apps      []services.CoolifyApp
 	fetchedAt time.Time
 }
 
@@ -43,10 +44,10 @@ type AIHandler struct {
 	client        *http.Client
 	streamClient  *http.Client // no timeout for streaming
 	serverHandler *ServerHandler
-	webSearch     *services.WebSearchService
+	toolRegistry  *tools.ToolRegistry
 }
 
-func NewAIHandler(cfg *config.Config, db *gorm.DB, serverHandler *ServerHandler) *AIHandler {
+func NewAIHandler(cfg *config.Config, db *gorm.DB, serverHandler *ServerHandler, toolRegistry *tools.ToolRegistry) *AIHandler {
 	return &AIHandler{
 		cfg: cfg,
 		db:  db,
@@ -57,7 +58,7 @@ func NewAIHandler(cfg *config.Config, db *gorm.DB, serverHandler *ServerHandler)
 			Timeout: 0, // no timeout for SSE streaming
 		},
 		serverHandler: serverHandler,
-		webSearch:     services.NewWebSearchService(cfg.TavilyAPIKey, cfg.SerperAPIKey),
+		toolRegistry:  toolRegistry,
 	}
 }
 
@@ -73,7 +74,6 @@ type AIActionRequest struct {
 	ServerID string `json:"server_id"`
 	Command  string `json:"command"`  // for execute_command
 	AppUUID  string `json:"app_uuid"` // for restart_app, get_logs
-	Query    string `json:"query"`    // for search_web
 }
 
 // ─── Chat (non-streaming) ───────────────────────────────────────────────────
@@ -403,8 +403,6 @@ func (h *AIHandler) ExecuteAIAction(c *fiber.Ctx) error {
 		return h.getLogs(c, req)
 	case "get_metrics":
 		return h.getMetrics(c, req)
-	case "search_web":
-		return h.searchWeb(c, req)
 	default:
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error":   true,
@@ -629,6 +627,7 @@ func (h *AIHandler) getMetrics(c *fiber.Ctx, req AIActionRequest) error {
 	})
 }
 
+// ─── GetConversation ────────────────────────────────────────────────────────
 
 // searchWeb performs a web search using Tavily or Serper API
 func (h *AIHandler) searchWeb(c *fiber.Ctx, req AIActionRequest) error {
@@ -639,7 +638,10 @@ func (h *AIHandler) searchWeb(c *fiber.Ctx, req AIActionRequest) error {
 		})
 	}
 
-	results, err := h.webSearch.Search(req.Query, 10)
+	// Use the tool registry's web search service
+	result, err := h.toolRegistry.ExecuteTool("search_web", map[string]interface{}{
+		"query": req.Query,
+	})
 	if err != nil {
 		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{
 			"error":   true,
@@ -648,14 +650,11 @@ func (h *AIHandler) searchWeb(c *fiber.Ctx, req AIActionRequest) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"action":       "search_web",
-		"query":        req.Query,
-		"results":      results,
-		"result_count": len(results),
-		"formatted":    h.webSearch.FormatResults(results),
+		"action":    "search_web",
+		"query":     req.Query,
+		"results":   result,
 	})
 }
-// ─── GetConversation ────────────────────────────────────────────────────────
 
 func (h *AIHandler) GetConversation(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
@@ -907,43 +906,29 @@ func (h *AIHandler) buildSystemPrompt(serverID *uuid.UUID) string {
 - If a server is offline, mention it and suggest diagnostics
 `)
 
-	// Add server-specific context if serverID provided
+	// Add enriched system context if serverID provided
 	if serverID != nil {
-		var server models.Server
-		if err := h.db.First(&server, "id = ?", *serverID).Error; err == nil {
-			sb.WriteString(fmt.Sprintf("\n## Current Server Context\n"))
-			sb.WriteString(fmt.Sprintf("- **Name**: %s\n", server.Name))
-			sb.WriteString(fmt.Sprintf("- **Host**: %s:%d\n", server.Host, server.Port))
-			sb.WriteString(fmt.Sprintf("- **Status**: %s\n", server.Status))
-			if server.LastConnectedAt != nil {
-				sb.WriteString(fmt.Sprintf("- **Last Connected**: %s\n", server.LastConnectedAt.Format(time.RFC3339)))
-			}
-
-			// Get latest metrics for this server
-			var metrics models.ServerMetrics
-			if err := h.db.Where("server_id = ?", *serverID).Order("collected_at DESC").First(&metrics).Error; err == nil {
-				sb.WriteString(fmt.Sprintf("\n### Latest Metrics (collected %s)\n", metrics.CollectedAt.Format("15:04:05 MST")))
-				sb.WriteString(fmt.Sprintf("- CPU: %.1f%%\n", metrics.CPUPercent))
-				sb.WriteString(fmt.Sprintf("- Memory: %.0f MB / %.0f MB (%.1f%%)\n",
-					metrics.MemoryUsedMB, metrics.MemoryTotalMB,
-					safePercent(metrics.MemoryUsedMB, metrics.MemoryTotalMB)))
-				sb.WriteString(fmt.Sprintf("- Disk: %.1f GB / %.1f GB (%.1f%%)\n",
-					metrics.DiskUsedGB, metrics.DiskTotalGB,
-					safePercent(metrics.DiskUsedGB, metrics.DiskTotalGB)))
-				sb.WriteString(fmt.Sprintf("- Load Average: %.2f / %.2f / %.2f\n",
-					metrics.LoadAvg1m, metrics.LoadAvg5m, metrics.LoadAvg15m))
-				sb.WriteString(fmt.Sprintf("- Containers: %d running / %d total\n",
-					metrics.ContainerRunning, metrics.ContainerCount))
-				sb.WriteString(fmt.Sprintf("- Uptime: %s\n", formatUptime(metrics.UptimeSeconds)))
-			}
+		systemContext := h.contextService.GetFullContext(*serverID)
+		
+		// Add Coolify apps to context
+		appCache.mu.RLock()
+		if len(appCache.apps) > 0 && time.Since(appCache.fetchedAt) < coolifyAppCacheTTL {
+			systemContext.SetCoolifyApps(appCache.apps)
 		}
+		appCache.mu.RUnlock()
+		
+		// Add full context as JSON
+		sb.WriteString("\n## Current System Context\n")
+		sb.WriteString("```json\n")
+		sb.WriteString(systemContext.ToJSON())
+		sb.WriteString("\n```\n")
 	}
 
-	// Add all servers list
-	var servers []models.Server
-	if err := h.db.Order("name ASC").Find(&servers).Error; err == nil && len(servers) > 0 {
+	// Add all servers list (lightweight)
+	allServers := h.contextService.GetAllServersContext()
+	if len(allServers) > 0 {
 		sb.WriteString("\n## All Servers\n")
-		for _, s := range servers {
+		for _, s := range allServers {
 			statusIcon := "?"
 			switch s.Status {
 			case "online":
@@ -955,11 +940,20 @@ func (h *AIHandler) buildSystemPrompt(serverID *uuid.UUID) string {
 		}
 	}
 
-	// Add Coolify running apps (cached)
-	if apps := h.getCoolifyAppsContext(); apps != "" {
-		sb.WriteString("\n## Running Coolify Apps\n")
-		sb.WriteString(apps)
-		sb.WriteString("\n")
+	// Add firing alerts summary
+	alertCounts := h.contextService.GetFiringAlertsCount()
+	totalAlerts := alertCounts["critical"] + alertCounts["warning"] + alertCounts["info"]
+	if totalAlerts > 0 {
+		sb.WriteString("\n## Active Alerts\n")
+		if alertCounts["critical"] > 0 {
+			sb.WriteString(fmt.Sprintf("- **Critical**: %d alert(s)\n", alertCounts["critical"]))
+		}
+		if alertCounts["warning"] > 0 {
+			sb.WriteString(fmt.Sprintf("- **Warning**: %d alert(s)\n", alertCounts["warning"]))
+		}
+		if alertCounts["info"] > 0 {
+			sb.WriteString(fmt.Sprintf("- **Info**: %d alert(s)\n", alertCounts["info"]))
+		}
 	}
 
 	// Add recent SRE events from ops backend
@@ -974,10 +968,9 @@ func (h *AIHandler) buildSystemPrompt(serverID *uuid.UUID) string {
 
 func (h *AIHandler) getCoolifyAppsContext() string {
 	appCache.mu.RLock()
-	if time.Since(appCache.fetchedAt) < coolifyAppCacheTTL && appCache.apps != "" {
-		cached := appCache.apps
+	if len(appCache.apps) > 0 && time.Since(appCache.fetchedAt) < coolifyAppCacheTTL {
 		appCache.mu.RUnlock()
-		return cached
+		return h.formatCoolifyApps(appCache.apps)
 	}
 	appCache.mu.RUnlock()
 
@@ -1001,31 +994,42 @@ func (h *AIHandler) getCoolifyAppsContext() string {
 	body, _ := io.ReadAll(resp.Body)
 
 	// Parse as array of objects
-	var apps []map[string]interface{}
-	if err := json.Unmarshal(body, &apps); err != nil {
+	var rawApps []map[string]interface{}
+	if err := json.Unmarshal(body, &rawApps); err != nil {
 		return ""
 	}
 
-	var sb strings.Builder
-	for _, app := range apps {
+	// Convert to CoolifyApp array
+	apps := make([]services.CoolifyApp, 0, len(rawApps))
+	for _, app := range rawApps {
 		name, _ := app["name"].(string)
 		appUUID, _ := app["uuid"].(string)
 		status, _ := app["status"].(string)
 		if name == "" {
 			continue
 		}
-		sb.WriteString(fmt.Sprintf("- %s (uuid: %s, status: %s)\n", name, appUUID, status))
+		apps = append(apps, services.CoolifyApp{
+			UUID:   appUUID,
+			Name:   name,
+			Status: status,
+		})
 	}
-
-	result := sb.String()
 
 	// Update cache
 	appCache.mu.Lock()
-	appCache.apps = result
+	appCache.apps = apps
 	appCache.fetchedAt = time.Now()
 	appCache.mu.Unlock()
 
-	return result
+	return h.formatCoolifyApps(apps)
+}
+
+func (h *AIHandler) formatCoolifyApps(apps []services.CoolifyApp) string {
+	var sb strings.Builder
+	for _, app := range apps {
+		sb.WriteString(fmt.Sprintf("- %s (uuid: %s, status: %s)\n", app.Name, app.UUID, app.Status))
+	}
+	return sb.String()
 }
 
 func (h *AIHandler) getRecentSREEvents() string {

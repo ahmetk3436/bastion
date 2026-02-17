@@ -40,6 +40,10 @@ type Config struct {
 	GLMAPIURL string
 	GLMModel  string
 
+	// Web Search
+	TavilyAPIKey string
+	SerperAPIKey string
+
 	// Metrics
 	MetricsCollectInterval int // seconds
 }
@@ -67,6 +71,8 @@ func Load() *Config {
 		GLMAPIKey:             getEnv("GLM_API_KEY", ""),
 		GLMAPIURL:             getEnv("GLM_API_URL", "https://api.z.ai/api/paas/v4/chat/completions"),
 		GLMModel:              getEnv("GLM_MODEL", "glm-5"),
+		TavilyAPIKey:          getEnv("TAVILY_API_KEY", ""),
+		SerperAPIKey:          getEnv("SERPER_API_KEY", ""),
 		MetricsCollectInterval: metricsInterval,
 	}
 }

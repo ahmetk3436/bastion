@@ -16,6 +16,7 @@ import (
 	"github.com/ahmetk3436/bastion/internal/config"
 	"github.com/ahmetk3436/bastion/internal/models"
 	"github.com/ahmetk3436/bastion/internal/services"
+	"github.com/ahmetk3436/bastion/internal/tools"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/valyala/fasthttp"
@@ -43,7 +44,7 @@ type AIHandler struct {
 	client        *http.Client
 	streamClient  *http.Client // no timeout for streaming
 	serverHandler *ServerHandler
-	webSearch     *services.WebSearchService
+	toolRegistry  *tools.ToolRegistry
 }
 
 func NewAIHandler(cfg *config.Config, db *gorm.DB, serverHandler *ServerHandler) *AIHandler {
@@ -57,7 +58,6 @@ func NewAIHandler(cfg *config.Config, db *gorm.DB, serverHandler *ServerHandler)
 			Timeout: 0, // no timeout for SSE streaming
 		},
 		serverHandler: serverHandler,
-		webSearch:     services.NewWebSearchService(cfg.TavilyAPIKey, cfg.SerperAPIKey),
 	}
 }
 
@@ -73,7 +73,6 @@ type AIActionRequest struct {
 	ServerID string `json:"server_id"`
 	Command  string `json:"command"`  // for execute_command
 	AppUUID  string `json:"app_uuid"` // for restart_app, get_logs
-	Query    string `json:"query"`    // for search_web
 }
 
 // ─── Chat (non-streaming) ───────────────────────────────────────────────────
@@ -402,9 +401,10 @@ func (h *AIHandler) ExecuteAIAction(c *fiber.Ctx) error {
 	case "get_logs":
 		return h.getLogs(c, req)
 	case "get_metrics":
+ttreturn h.getMetrics(c, req)
+tcase "search_web":
+ttreturn h.searchWeb(c, req)
 		return h.getMetrics(c, req)
-	case "search_web":
-		return h.searchWeb(c, req)
 	default:
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error":   true,
@@ -629,32 +629,6 @@ func (h *AIHandler) getMetrics(c *fiber.Ctx, req AIActionRequest) error {
 	})
 }
 
-
-// searchWeb performs a web search using Tavily or Serper API
-func (h *AIHandler) searchWeb(c *fiber.Ctx, req AIActionRequest) error {
-	if req.Query == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error":   true,
-			"message": "query is required for search_web",
-		})
-	}
-
-	results, err := h.webSearch.Search(req.Query, 10)
-	if err != nil {
-		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{
-			"error":   true,
-			"message": "Web search failed: " + err.Error(),
-		})
-	}
-
-	return c.JSON(fiber.Map{
-		"action":       "search_web",
-		"query":        req.Query,
-		"results":      results,
-		"result_count": len(results),
-		"formatted":    h.webSearch.FormatResults(results),
-	})
-}
 // ─── GetConversation ────────────────────────────────────────────────────────
 
 func (h *AIHandler) GetConversation(c *fiber.Ctx) error {
