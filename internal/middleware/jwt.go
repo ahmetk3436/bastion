@@ -53,19 +53,24 @@ func GenerateTokens(username, secret, displayName, role string) (string, string,
 
 func JWTProtected(secret string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		var tokenStr string
+
 		auth := c.Get("Authorization")
-		if auth == "" {
+		if auth != "" {
+			tokenStr = strings.TrimPrefix(auth, "Bearer ")
+			if tokenStr == auth {
+				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+					"error":   true,
+					"message": "Invalid authorization format",
+				})
+			}
+		} else if qToken := c.Query("token"); qToken != "" {
+			// WebSocket connections pass token as query parameter
+			tokenStr = qToken
+		} else {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 				"error":   true,
 				"message": "Missing authorization header",
-			})
-		}
-
-		tokenStr := strings.TrimPrefix(auth, "Bearer ")
-		if tokenStr == auth {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"error":   true,
-				"message": "Invalid authorization format",
 			})
 		}
 
