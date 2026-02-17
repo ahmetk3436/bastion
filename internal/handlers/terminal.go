@@ -131,7 +131,7 @@ func (h *TerminalHandler) HandleTerminal() fiber.Handler {
 				}
 				if n > 0 {
 					bytesTransferred += int64(n)
-					c.WriteMessage(websocket.BinaryMessage, buf[:n])
+					c.WriteMessage(websocket.TextMessage, buf[:n])
 				}
 			}
 		}()
@@ -146,7 +146,7 @@ func (h *TerminalHandler) HandleTerminal() fiber.Handler {
 				}
 				if n > 0 {
 					bytesTransferred += int64(n)
-					c.WriteMessage(websocket.BinaryMessage, buf[:n])
+					c.WriteMessage(websocket.TextMessage, buf[:n])
 				}
 			}
 		}()
