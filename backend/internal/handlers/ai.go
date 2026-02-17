@@ -15,6 +15,7 @@ import (
 
 	"github.com/ahmetk3436/bastion/internal/config"
 	"github.com/ahmetk3436/bastion/internal/models"
+	"github.com/ahmetk3436/bastion/internal/services"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/valyala/fasthttp"
@@ -408,10 +409,28 @@ func (h *AIHandler) ExecuteAIAction(c *fiber.Ctx) error {
 }
 
 func (h *AIHandler) executeCommand(c *fiber.Ctx, req AIActionRequest) error {
-	if req.ServerID == "" || req.Command == "" {
+	// Auto-detect server if not provided (use default server)
+	if req.ServerID == "" {
+		var defaultServer models.Server
+		if err := h.db.First(&defaultServer, "is_default = ?", true).Error; err == nil {
+			req.ServerID = defaultServer.ID.String()
+		} else {
+			// Try any server
+			if err := h.db.First(&defaultServer).Error; err == nil {
+				req.ServerID = defaultServer.ID.String()
+			} else {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+					"error":   true,
+					"message": "No server configured. Please add a server first.",
+				})
+			}
+		}
+	}
+
+	if req.Command == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error":   true,
-			"message": "server_id and command are required for execute_command",
+			"message": "command is required",
 		})
 	}
 
@@ -491,13 +510,20 @@ func (h *AIHandler) executeCommand(c *fiber.Ctx, req AIActionRequest) error {
 	}
 	h.db.Create(&history)
 
+	// Check command safety for UI feedback
+	safety := services.DefaultSafetyChecker.CheckSafety(req.Command)
+
 	return c.JSON(fiber.Map{
-		"action":      "execute_command",
-		"command":     req.Command,
-		"output":      output,
-		"exit_code":   exitCode,
-		"duration_ms": duration.Milliseconds(),
-		"server":      server.Name,
+		"action":        "execute_command",
+		"command":       req.Command,
+		"output":        output,
+		"exit_code":     exitCode,
+		"duration_ms":   duration.Milliseconds(),
+		"server":        server.Name,
+		"server_id":     server.ID.String(),
+		"safety":        safety.IsSafe,
+		"command_type":  safety.Category,
+		"base_command":  safety.BaseCommand,
 	})
 }
 
