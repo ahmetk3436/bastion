@@ -40,5 +40,6 @@ func Migrate() error {
 		&models.AlertRule{},
 		&models.Alert{},
 		&models.AuditLog{},
+		&models.RemoteConfig{},
 	)
 }

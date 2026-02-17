@@ -87,6 +87,8 @@ func main() {
 	databaseHandler := handlers.NewDatabaseHandler(db)
 	fileHandler := handlers.NewFileHandler(serverHandler)
 	auditHandler := handlers.NewAuditHandler(db)
+	configHandler := handlers.NewRemoteConfigHandler(db)
+	configHandler.SeedDefaults()
 
 	// ─── Fiber App ──────────────────────────────────────────────────────
 	app := fiber.New(fiber.Config{
@@ -146,7 +148,7 @@ func main() {
 	routes.Setup(app, cfg, authHandler, serverHandler, terminalHandler, commandHandler,
 		cronHandler, coolifyHandler, opsHandler, aiHandler, systemHandler,
 		processHandler, dockerHandler, monitorHandler, alertHandler, databaseHandler,
-		fileHandler, auditHandler)
+		fileHandler, auditHandler, configHandler)
 
 	// ─── Graceful Shutdown ──────────────────────────────────────────────
 	quit := make(chan os.Signal, 1)

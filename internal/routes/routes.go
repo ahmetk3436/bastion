@@ -26,9 +26,11 @@ func Setup(
 	databaseHandler *handlers.DatabaseHandler,
 	fileHandler *handlers.FileHandler,
 	auditHandler *handlers.AuditHandler,
+	configHandler *handlers.RemoteConfigHandler,
 ) {
 	// ─── Public ──────────────────────────────────────────────────────────
 	app.Get("/api/health", systemHandler.Health)
+	app.Get("/api/config", configHandler.GetConfig)
 
 	// ─── Auth ────────────────────────────────────────────────────────────
 	app.Post("/api/auth/login", authHandler.Login)
@@ -131,6 +133,11 @@ func Setup(
 
 	// Audit
 	api.Get("/audit", auditHandler.ListAuditLogs)
+
+	// Remote Config (admin)
+	api.Get("/config/:key", configHandler.GetConfigKey)
+	api.Put("/config/:key", configHandler.SetConfigKey)
+	api.Delete("/config/:key", configHandler.DeleteConfigKey)
 
 	// Status Page
 	api.Get("/status", systemHandler.StatusPage)
